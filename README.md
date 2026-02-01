@@ -18,4 +18,4 @@ Other countries may vary
 Add the following to the Additional Boards: https://files.seeedstudio.com/arduino/package_seeeduino_boards_index.json,https://github.com/Heltec-Aaron-Lee/WiFi_Kit_series/releases/download/0.0.9/package_heltec_esp32_index.json
 
 
-Boards needed: Seeed nRF52 Boards, Silicon Labs, Seeed nRF52 mbed-enabled Boards, Heltec ESP32 Series Dev-Boards, esp32, Arduino nRFT52 Boards
+Boards needed in Board Manager: Seeed nRF52 Boards, Silicon Labs, Seeed nRF52 mbed-enabled Boards, Heltec ESP32 Series Dev-Boards, esp32, Arduino nRFT52 Boards
