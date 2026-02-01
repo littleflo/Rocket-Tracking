@@ -15,3 +15,4 @@ Adafruit ST7735 Library
 
 Other countries may vary
 
+Add the following to the Additional Boards: https://files.seeedstudio.com/arduino/package_seeeduino_boards_index.json,https://github.com/Heltec-Aaron-Lee/WiFi_Kit_series/releases/download/0.0.9/package_heltec_esp32_index.json
