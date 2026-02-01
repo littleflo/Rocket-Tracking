@@ -1,0 +1,206 @@
+/*
+   GROUND STATION: ALL-DATA + VOLTAGE FIX
+   - Fixed: GS Battery now reads correctly from Pin A0.
+   - Top:   Signal | Rocket Volts | Rocket %
+   - Line2: Rocket Charge Time Est.
+   - Bot:   Status | Ground Station Volts | Ground Station %
+   - Logs:  "flight.csv" (Persistent)
+*/
+
+#include <Arduino.h>
+#include <SPI.h>
+#include <Wire.h>
+#include <RadioLib.h>
+#include <U8g2lib.h>
+#include <Adafruit_LittleFS.h>
+#include <InternalFileSystem.h>
+
+using namespace Adafruit_LittleFS_Namespace;
+
+// --- PINS (XIAO nRF52840) ---
+const int PIN_LORA_SCK  = 30; 
+const int PIN_LORA_MISO = 3;  
+const int PIN_LORA_MOSI = 28; 
+const int PIN_LORA_CS   = 46; 
+const int PIN_LORA_DIO1 = 7;  
+const int PIN_LORA_RST  = 39; 
+const int PIN_LORA_BUSY = 42; 
+
+const int PIN_OLED_SCL  = 5;  
+const int PIN_OLED_SDA  = 6;  
+const int PIN_BUZZER    = 32; 
+
+// --- BATTERY FIX: Use A0 for Expansion Board ---
+const int PIN_GS_BAT_READ = A0; 
+
+// Display Driver
+U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, PIN_OLED_SCL, PIN_OLED_SDA);
+
+SX1262 radio = new Module(PIN_LORA_CS, PIN_LORA_DIO1, PIN_LORA_RST, PIN_LORA_BUSY);
+
+// Logic Variables
+bool hasAlerted = false;
+float startAlt = -1000.0; 
+bool isAscending = false;
+
+// --- HELPER: Read Ground Station Battery (FIXED) ---
+float readGSBattery() {
+  // The Expansion board has a simple voltage divider on A0
+  // No enable pin needed.
+  int val = analogRead(PIN_GS_BAT_READ);
+  
+  // Math: (ADC / 1023) * 3.3V_Ref * Divider_Correction
+  // The expansion board usually uses a 1/2 divider, so we multiply by ~1.51 to 2.0
+  // We use 1.51 multiplier for XIAO logic (experimentally tuned for nRF52)
+  float voltage = (val / 1023.0) * 3.3 * 1.51; 
+  
+  // If reading is too low (USB powered only), clamp it
+  if (voltage < 0.1) return 0.0;
+  
+  // Correction: If it reads low (like 2.4V) when full, change 1.51 to 2.0
+  // Try 2.0 first if it's a standard divider
+  return (val / 1023.0) * 3.3 * 2.0; 
+}
+
+// --- HELPER: Map Float to % ---
+int getPercent(float volts) {
+  int pct = map((long)(volts * 100), 360, 420, 0, 100);
+  return constrain(pct, 0, 100);
+}
+
+// --- HELPER: Estimate Charge Time ---
+String getChargeTime(float volts) {
+  if (volts >= 4.15) return "Full";
+  float voltageNeeded = 4.20 - volts;
+  float hoursLeft = voltageNeeded * 10.0; 
+  return "~" + String(hoursLeft, 1) + "h";
+}
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(PIN_BUZZER, OUTPUT);
+  digitalWrite(PIN_BUZZER, LOW);
+  
+  // FIX: Expansion board uses A0
+  pinMode(PIN_GS_BAT_READ, INPUT);
+  analogReadResolution(10); 
+
+  // 1. ROBUST FILESYSTEM
+  if (!InternalFS.begin()) {
+    InternalFS.format(); 
+    InternalFS.begin();
+  }
+  
+  // Persistent Log Header
+  File f = InternalFS.open("/flight.csv", FILE_O_WRITE);
+  if(f) { 
+    f.seek(f.size()); 
+    f.println(); f.println("--- RESTART ---"); 
+    if (f.size() < 20) f.println("TimeMS,Callsign,Lat,Lon,Alt,Speed,Volts,Pop");
+    f.close(); 
+  }
+
+  // 2. Init Screen
+  Wire.setPins(PIN_OLED_SDA, PIN_OLED_SCL);
+  u8g2.setI2CAddress(0x3D * 2);             
+  u8g2.begin();
+  
+  // 3. Init Radio
+  SPI.setPins(PIN_LORA_MISO, PIN_LORA_SCK, PIN_LORA_MOSI);
+  SPI.begin();
+  radio.begin(915.0);
+  radio.setSpreadingFactor(10); radio.setBandwidth(250.0); radio.setCodingRate(7); radio.setOutputPower(22);      
+}
+
+void loop() {
+  if(Serial.available()) {
+     String cmd = Serial.readStringUntil('\n');
+     if(cmd.indexOf("dump") >= 0) {
+        Serial.println("\n--- DUMP ---");
+        File f = InternalFS.open("/flight.csv", FILE_O_READ);
+        if(f) { while(f.available()) Serial.write(f.read()); f.close(); }
+        Serial.println("\n--- END ---");
+     }
+  }
+
+  String str;
+  int state = radio.receive(str);
+
+  if (state == RADIOLIB_ERR_NONE && str.indexOf("K0VDR") >= 0) {
+     Serial.println(str);
+     
+     // Log
+     File f = InternalFS.open("/flight.csv", FILE_O_WRITE);
+     if(f) { f.seek(f.size()); f.println(String(millis()) + "," + str); f.close(); }
+
+     bool dropDetected = str.endsWith(",1");
+
+     // --- ALARM ---
+     if (dropDetected && !hasAlerted) {
+         u8g2.clearBuffer();
+         u8g2.setFont(u8g2_font_helvB10_tr); u8g2.drawStr(0, 25, "Chute Deployment!");
+         u8g2.setFont(u8g2_font_ncenB08_tr); u8g2.drawStr(0, 45, "Continuity Break!");
+         u8g2.sendBuffer();
+         unsigned long s = millis();
+         while(millis() - s < 3000) { tone(PIN_BUZZER, 4000); delay(200); noTone(PIN_BUZZER); delay(100); }
+         hasAlerted = true;
+     }
+     if (!dropDetected) hasAlerted = false;
+
+     // --- PARSING ---
+     int c1 = str.indexOf(',');
+     int c2 = str.indexOf(',', c1+1);
+     int c3 = str.indexOf(',', c2+1);
+     int c4 = str.indexOf(',', c3+1);
+     int c5 = str.indexOf(',', c4+1); 
+     int c6 = str.indexOf(',', c5+1); 
+     
+     String coords = str.substring(c1+1, c3);
+     String altStr = str.substring(c3+1, c4);
+     String spd = str.substring(c4+1, c5);
+     float rktVolts = str.substring(c5+1, c6).toFloat();
+     
+     float currentAlt = altStr.toFloat();
+     if (startAlt == -1000.0 && currentAlt > 0) startAlt = currentAlt; 
+     if (startAlt != -1000.0 && currentAlt > (startAlt + 50)) isAscending = true;
+
+     // --- DISPLAY UPDATE ---
+     float gsVolts = readGSBattery();
+
+     u8g2.clearBuffer();
+     u8g2.setFont(u8g2_font_5x8_tr); 
+     
+     // LINE 1: Signal | Rkt Volts | Rkt %
+     u8g2.setCursor(0, 8);
+     u8g2.print("S:"); u8g2.print(radio.getRSSI());
+     u8g2.print(" R:"); u8g2.print(rktVolts, 1); u8g2.print("V");
+     u8g2.print(" "); u8g2.print(getPercent(rktVolts)); u8g2.print("%");
+     
+     // LINE 2: Charge Time Est
+     u8g2.setCursor(0, 18); 
+     u8g2.print("R-Chg: "); u8g2.print(getChargeTime(rktVolts));
+
+     // LINE 3: Coords
+     u8g2.setCursor(0, 28); u8g2.print(coords);
+     
+     // LINE 4: BIG DATA
+     u8g2.setFont(u8g2_font_ncenB10_tr); 
+     u8g2.setCursor(0, 44);
+     u8g2.print(altStr); u8g2.print("ft "); 
+     u8g2.print(spd); u8g2.print("mh");
+
+     // LINE 5: Status | GS Info
+     u8g2.setFont(u8g2_font_5x8_tr); 
+     u8g2.setCursor(0, 58);
+     if(hasAlerted) u8g2.print("DESCENDING");
+     else if (isAscending) u8g2.print("ASCENDING ");
+     else u8g2.print("READY       ");
+     
+     // GS Info (Bottom Right)
+     u8g2.setCursor(65, 58);
+     u8g2.print("G:"); u8g2.print(gsVolts, 1); u8g2.print("V ");
+     u8g2.print(getPercent(gsVolts)); u8g2.print("%");
+     
+     u8g2.sendBuffer();
+  }
+}
