@@ -149,7 +149,7 @@ void loop() {
     if (maxAlt > 300 && (maxAlt - currentAlt) > 150) popTriggered = true;
 
     // --- BUILD PACKET ---
-    String msg = "K0VDR,";
+    // Insert your callsign, then delete this comment String msg = "Your_Callsign_Here,";
     if (localGps.location.isValid()) {
       msg += String(localGps.location.lat(), 5) + ",";
       msg += String(localGps.location.lng(), 5) + ",";
