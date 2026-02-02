@@ -1,27 +1,60 @@
-# Rocket-Tracking
-Uses the Heltec Wireless Tracker V1.1 and Seeed Studio Wio L1 Pro to track a rocket
+Rocket Tracking System
 
-Prerequisites:
-Arduino IDE,
-U8g2 Library,
-RabioLib Library,
-Adafruit LittleFS Library,
-TinyGPSPlus Library,
-Adafruit GFX Library,
-Adafruit ST7735 Library
+A high-altitude tracking solution utilizing the Heltec Wireless Tracker V1.1 and Seeed Studio Wio L1 Pro.
 
+    [!IMPORTANT]
+    Amateur Radio License Required: Operation of this equipment in the USA requires a valid Amateur Radio License. Regulations in other countries may vary; please check your local laws before transmitting.
 
-!!!! *YOU NEED AN AMATEUR RADIO LICENSE IN THE USA !!!! 
+🛠 Prerequisites
 
+Ensure you have the Arduino IDE installed along with the following libraries:
+Required Libraries
 
-Other countries may vary
+    U8g2
 
+    RadioLib
 
-Add the following to the Additional Boards: https://files.seeedstudio.com/arduino/package_seeeduino_boards_index.json,https://github.com/Heltec-Aaron-Lee/WiFi_Kit_series/releases/download/0.0.9/package_heltec_esp32_index.json
+    Adafruit LittleFS
 
+    TinyGPSPlus
 
-Boards needed in Board Manager: Seeed nRF52 Boards, Silicon Labs, Seeed nRF52 mbed-enabled Boards, Heltec ESP32 Series Dev-Boards, esp32, Arduino nRFT52 Boards
+    Adafruit GFX
 
-In the code I have put the following comment, find it, change the callsign, then delete this portion: // Insert your callsign, then delete this comment 
+    Adafruit ST7335
 
-*If you intend to not frequency hop, which requires modification to the code to do so.
+Board Manager Configuration
+
+    Open Arduino IDE Preferences and add these URLs to Additional Boards Manager URLs:
+
+        https://files.seeedstudio.com/arduino/package_seeeduino_boards_index.json
+
+        https://github.com/Heltec-Aaron-Lee/WiFi_Kit_series/releases/download/0.0.9/package_heltec_esp32_index.json
+
+    Install the following via the Board Manager:
+
+        Seeed nRF52 Boards
+
+        Silicon Labs
+
+        Seeed nRF52 mbed-enabled Boards
+
+        Heltec ESP32 Series Dev-Boards
+
+        esp32
+
+        Arduino nRF52 Boards
+
+🚀 Setup & Usage
+1. Identity Configuration
+
+To comply with radio regulations, you must identify your transmission.
+
+    Search the code for the comment: // Insert your callsign, then delete this comment
+
+    Replace it with your registered Callsign.
+
+    Delete the comment line.
+
+2. Frequency Hopping
+
+The system is not configured for frequency hopping by default. If you intend to use a frequency hopping, manual code modifications are required.
