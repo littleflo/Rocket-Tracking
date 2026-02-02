@@ -2,9 +2,8 @@ Rocket Tracking System
 
 A high-altitude tracking solution utilizing the Heltec Wireless Tracker V1.1 and Seeed Studio Wio L1 Pro.
 
-    !!!!IMPORTANT!!!!
-    Amateur Radio License Required: Operation of this equipment in the USA requires a valid Amateur Radio License. 
-    Regulations in other countries may vary; please check your local laws before transmitting.
+‼️IMPORTANT‼️
+Amateur Radio License Required: A valid Ham Radio License is strictly required for operation in the USA, when operating on a fixed frequency or using hardware in a way it wasn't certified for. Regulations in other countries may vary; check local laws before transmitting.
 
 🛠 Prerequisites
 
