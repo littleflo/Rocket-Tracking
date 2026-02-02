@@ -126,7 +126,7 @@ void loop() {
   String str;
   int state = radio.receive(str);
 
-  if (state == RADIOLIB_ERR_NONE && str.indexOf("Your_Callsign_Here") >= 0) {
+ // Insert your callsign, then delete this comment  if (state == RADIOLIB_ERR_NONE && str.indexOf("Your_Callsign_Here") >= 0) {
      Serial.println(str);
      
      // Log
