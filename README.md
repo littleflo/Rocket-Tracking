@@ -22,4 +22,6 @@ Add the following to the Additional Boards: https://files.seeedstudio.com/arduin
 
 Boards needed in Board Manager: Seeed nRF52 Boards, Silicon Labs, Seeed nRF52 mbed-enabled Boards, Heltec ESP32 Series Dev-Boards, esp32, Arduino nRFT52 Boards
 
+In the code I have put the following comment, find it, change the callsign, then delete this portion: // Insert your callsign, then delete this comment 
+
 *If you intend to not frequency hop, which requires modification to the code to do so.
