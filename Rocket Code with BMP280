@@ -30,8 +30,8 @@
 // --- BMP280 CONFIG ---
 #define BMP_PWR_PIN 3  // Source 3.3V
 #define BMP_GND_PIN 4  // Source GND
-#define BMP_SDA     16 // SDA (User Requested)
-#define BMP_SCL     17 // SCL (User Requested)
+#define BMP_SDA     16 // SDA 
+#define BMP_SCL     17 // SCL 
 
 // --- GPS PINS ---
 #define GPS_RX_PIN 33 
