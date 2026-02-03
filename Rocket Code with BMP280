@@ -1,0 +1,253 @@
+/*
+   ROCKET TRACKER: ULTIMATE FLIGHT EDITION (BMP280 INTEGRATED)
+   - GPS: Pins 33/34
+   - Break-Wire: Pin 6
+   - BMP280 I2C: SDA=16, SCL=17
+   - BMP280 Pwr: Pin 3 (3.3V), Pin 4 (GND)
+*/
+
+#include <RadioLib.h>
+#include <SPI.h>
+#include <TinyGPSPlus.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ST7735.h>
+#include <FS.h>
+#include <LittleFS.h>
+#include <Wire.h>            // Required for I2C
+#include <Adafruit_BMP280.h> // REQ: Install Adafruit BMP280 Library
+
+// --- HELTEC PINS ---
+#define TFT_CS   38
+#define TFT_RST  39
+#define TFT_DC   40
+#define TFT_SCLK 41
+#define TFT_MOSI 42
+#define TFT_BL   21
+
+#define BAT_ADC_PIN  1
+#define BAT_CTRL_PIN 2
+
+// --- BMP280 CONFIG ---
+#define BMP_PWR_PIN 3  // Source 3.3V
+#define BMP_GND_PIN 4  // Source GND
+#define BMP_SDA     16 // SDA (User Requested)
+#define BMP_SCL     17 // SCL (User Requested)
+
+// --- GPS PINS ---
+#define GPS_RX_PIN 33 
+#define GPS_TX_PIN 34 
+
+// LED is on 18. Since SDA is 16, this is SAFE.
+#define LED_PIN 18 
+
+// --- SENSOR PIN ---
+#define POP_PIN 6  
+
+// --- LORA PINS ---
+#define LORA_NSS  8
+#define LORA_RST  12
+#define LORA_BUSY 13
+#define LORA_DIO1 14
+
+// --- OBJECTS ---
+Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RST);
+SX1262 radio = new Module(LORA_NSS, LORA_DIO1, LORA_RST, LORA_BUSY);
+TinyGPSPlus localGps;
+HardwareSerial GPS_Serial(1);
+Adafruit_BMP280 bmp; // I2C
+
+// --- VARIABLES ---
+int txInterval = 500; 
+unsigned long lastTx = 0;
+float batteryVoltage = 0.0;
+float gpsAlt = 0.0;
+float baroAlt = 0.0; // From BMP280
+float maxAlt = -1000.0;
+bool popTriggered = false;
+bool bmpStatus = false;
+
+// --- BATTERY READ ---
+float readBattery() {
+  digitalWrite(BAT_CTRL_PIN, HIGH); 
+  delay(20); 
+  uint16_t raw = analogRead(BAT_ADC_PIN);
+  digitalWrite(BAT_CTRL_PIN, LOW); 
+  return (raw / 4095.0) * 3.3 * 4.90; 
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  // 1. Hardware Init
+  pinMode(TFT_BL, OUTPUT);   digitalWrite(TFT_BL, HIGH);
+  pinMode(LED_PIN, OUTPUT);
+  pinMode(BAT_CTRL_PIN, OUTPUT); digitalWrite(BAT_CTRL_PIN, HIGH);
+  pinMode(POP_PIN, INPUT_PULLUP);
+
+  // --- BMP280 POWER UP ---
+  // We use GPIOs to power the sensor
+  pinMode(BMP_PWR_PIN, OUTPUT); digitalWrite(BMP_PWR_PIN, HIGH); // 3.3V
+  pinMode(BMP_GND_PIN, OUTPUT); digitalWrite(BMP_GND_PIN, LOW);  // GND
+  delay(100); // Allow sensor to boot
+
+  // 2. Init Storage
+  if(!LittleFS.begin(true)){ Serial.println("FS Fail"); }
+  File file = LittleFS.open("/flight.csv", "w");
+  if(file) { file.println("Time,Lat,Lon,GPSAlt,Speed,Volts,Pop,BaroAlt"); file.close(); }
+
+  // 3. Init Screen
+  tft.initR(INITR_MINI160x80_PLUGIN); 
+  tft.setRotation(1); 
+  tft.fillScreen(ST77XX_BLACK);
+  tft.setTextWrap(false);
+  
+  tft.setTextColor(ST77XX_MAGENTA); tft.setCursor(0, 0); tft.print("ROCKET TRACKER");
+  tft.setTextColor(ST77XX_WHITE);
+  tft.setCursor(0, 20); tft.print("GPS:");
+  tft.setCursor(0, 35); tft.print("Lat:");
+  tft.setCursor(0, 45); tft.print("Lon:");
+  tft.setCursor(0, 60); tft.print("Alt:");
+  tft.setCursor(0, 70); tft.print("Baro:"); 
+
+  // 4. Init BMP280
+  // ESP32 allows defining pins in Wire.begin
+  Wire.begin(BMP_SDA, BMP_SCL); 
+  
+  if (bmp.begin(0x76)) { // Try 0x76 (Common)
+    bmpStatus = true;
+    tft.setTextColor(ST77XX_GREEN, ST77XX_BLACK); tft.setCursor(100, 10); tft.print("BMP OK");
+  } else if (bmp.begin(0x77)) { // Try 0x77 (Alt address)
+    bmpStatus = true;
+    tft.setTextColor(ST77XX_GREEN, ST77XX_BLACK); tft.setCursor(100, 10); tft.print("BMP OK");
+  } else {
+    tft.setTextColor(ST77XX_RED, ST77XX_BLACK); tft.setCursor(100, 10); tft.print("BMP NO");
+    Serial.println("BMP Fail! Check wires.");
+  }
+
+  // 5. Init GPS & LoRa
+  GPS_Serial.begin(115200, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
+  
+  int state = radio.begin(915.0);
+  if (state == RADIOLIB_ERR_NONE) {
+    radio.setSpreadingFactor(10); radio.setBandwidth(250.0); radio.setCodingRate(7); radio.setOutputPower(22);
+    tft.setTextColor(ST77XX_GREEN, ST77XX_BLACK); tft.setCursor(100, 0); tft.print("SYS OK");
+  } else {
+    tft.setTextColor(ST77XX_RED, ST77XX_BLACK); tft.setCursor(100, 0); tft.print("RAD FAIL");
+  }
+}
+
+// Helper
+void updateValues(String lastMsg, float speed);
+
+void loop() {
+  // --- SERIAL COMMANDS ---
+  if(Serial.available()){
+    String cmd = Serial.readStringUntil('\n'); cmd.trim();
+    if(cmd == "dump"){
+       Serial.println("--- LOG START ---");
+       File file = LittleFS.open("/flight.csv", "r");
+       if(file){ while(file.available()) Serial.write(file.read()); file.close(); }
+       Serial.println("--- LOG END ---");
+    }
+    if(cmd == "force drop"){ popTriggered = true; Serial.println(">> FORCE DROP SENT!"); }
+    if(cmd == "reset"){ popTriggered = false; Serial.println(">> RESET OK."); }
+  }
+
+  while (GPS_Serial.available() > 0) localGps.encode(GPS_Serial.read());
+
+  // --- CHECK BREAK WIRE ---
+  if (digitalRead(POP_PIN) == HIGH) {
+      popTriggered = true;
+  }
+
+  if (millis() - lastTx > txInterval) {
+    lastTx = millis();
+    digitalWrite(LED_PIN, HIGH); // Blink LED on Tx
+    
+    batteryVoltage = readBattery();
+    float speed = localGps.speed.mph();
+    gpsAlt = localGps.altitude.feet();
+
+    // Read BMP280
+    if (bmpStatus) {
+      // 1013.25 = Sea Level Pressure. Result converted to Feet.
+      baroAlt = bmp.readAltitude(1013.25) * 3.28084; 
+    }
+
+    // Logic: Use Barometric Altitude if available (more precise), else GPS
+    float trackingAlt = (bmpStatus) ? baroAlt : gpsAlt;
+
+    if (trackingAlt > maxAlt) maxAlt = trackingAlt;
+    
+    // Apogee Trigger: Drop if we are 150ft below max height
+    if (maxAlt > 300 && (maxAlt - trackingAlt) > 150) popTriggered = true;
+
+    // --- BUILD PACKET ---
+    // Format: Callsign, Lat, Lon, GPSAlt, Speed, Volts, Pop, BaroAlt
+    // Insert your callsign, then delete this comment String msg = "Your_Callsign_Here,";
+    if (localGps.location.isValid()) {
+      msg += String(localGps.location.lat(), 5) + ",";
+      msg += String(localGps.location.lng(), 5) + ",";
+      msg += String(gpsAlt, 0); 
+    } else {
+      msg += "0.0,0.0,0"; 
+    }
+    
+    msg += "," + String(speed, 1);     
+    msg += "," + String(batteryVoltage, 2);   
+    msg += "," + String(popTriggered ? 1 : 0); 
+    msg += "," + String(baroAlt, 0); // Append Baro Data
+
+    // --- SEND & LOG ---
+    radio.transmit(msg);
+    Serial.println(msg); 
+    
+    File file = LittleFS.open("/flight.csv", "a");
+    if(file){ file.println(String(millis()) + "," + msg); file.close(); }
+    
+    updateValues(msg, speed);
+    digitalWrite(LED_PIN, LOW);
+  }
+}
+
+void updateValues(String lastMsg, float speed) {
+    // 1. Satellites
+    if (localGps.location.isValid()) tft.setTextColor(ST77XX_GREEN, ST77XX_BLACK);
+    else tft.setTextColor(ST77XX_RED, ST77XX_BLACK);
+    tft.setCursor(35, 20); tft.print(localGps.satellites.value()); tft.print("  "); 
+
+    // 2. Lat/Lon
+    tft.setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
+    tft.setCursor(30, 35);
+    if(localGps.location.isValid()) tft.print(localGps.location.lat(), 4);
+    else tft.print("Search...");
+    tft.setCursor(30, 45);
+    if(localGps.location.isValid()) tft.print(localGps.location.lng(), 4);
+    
+    // 3. Altitude (GPS)
+    tft.setTextColor(ST77XX_CYAN, ST77XX_BLACK);
+    tft.setCursor(30, 60);
+    if(localGps.location.isValid()) { tft.print(gpsAlt, 0); tft.print("ft  "); }
+    else { tft.print("0ft  "); }
+
+    // 4. Barometric Altitude (New Line)
+    tft.setTextColor(ST77XX_ORANGE, ST77XX_BLACK);
+    tft.setCursor(30, 70); 
+    if (bmpStatus) { tft.print(baroAlt, 0); tft.print("ft"); }
+    else { tft.print("--"); }
+
+    // 5. BATTERY
+    if (batteryVoltage > 3.7) tft.setTextColor(ST77XX_GREEN, ST77XX_BLACK);
+    else if (batteryVoltage > 3.5) tft.setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
+    else tft.setTextColor(ST77XX_RED, ST77XX_BLACK);
+    tft.setCursor(110, 20); tft.print(batteryVoltage, 1); tft.print("V");
+
+    // 6. POP INDICATOR (Moved to corner)
+    if (popTriggered) {
+       tft.setTextColor(ST77XX_RED, ST77XX_BLACK);
+       tft.setCursor(120, 70); tft.print("POP");
+    } else {
+       tft.setTextColor(ST77XX_BLACK, ST77XX_BLACK); // Hide
+       tft.setCursor(120, 70); tft.print("POP");
+    }
+}
