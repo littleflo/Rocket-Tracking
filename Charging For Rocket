@@ -1,0 +1,20 @@
+// --- RESCUE CHARGER SKETCH ---
+// Use this when the battery is too dead to boot the main firmware.
+// This code does NOTHING, ensuring maximum power goes to charging.
+
+void setup() {
+  // Turn off board peripherals to save power
+  // (Heltec V3 specific pins)
+  pinMode(21, OUTPUT); digitalWrite(21, LOW); // Turn off Screen Backlight / VEXT
+  pinMode(35, OUTPUT); digitalWrite(35, LOW); // Turn off LED
+  
+  // Just start Serial so you know it's alive
+  Serial.begin(115200);
+  Serial.println("--- CHARGING MODE ACTIVE ---");
+  Serial.println("Leave plugged in until LED is Solid Orange.");
+}
+
+void loop() {
+  // Sleep tight, let the battery eat.
+  delay(10000);
+}
